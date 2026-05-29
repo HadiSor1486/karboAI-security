@@ -232,6 +232,8 @@ const PRI={warning:'تحذيري',urgent:'مستعجل'};
 function rankInfo(p){if(p>=60)return'قائد أمني';if(p>=35)return'ضابط أول';if(p>=18)return'ضابط';if(p>=8)return'رقيب';if(p>=3)return'عريف';return'مجنّد';}
 function toast(msg,type='info'){let h=$('#toastHost');if(!h){h=document.createElement('div');h.id='toastHost';h.className='toast-host';document.body.appendChild(h);}const t=document.createElement('div');t.className=`toast toast--${type}`;t.innerHTML=`<span class="toast__dot"></span><span>${msg}</span>`;h.appendChild(t);requestAnimationFrame(()=>t.classList.add('show'));setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),350);},3800);}
 async function uploadFiles(folder,files){const urls=[];for(const f of files){const ext=f.name.split('.').pop();const path=`${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;const {error}=await sb.storage.from(EVIDENCE_BUCKET).upload(path,f);if(error){console.error(error);continue;}const {data}=sb.storage.from(EVIDENCE_BUCKET).getPublicUrl(path);urls.push(data.publicUrl);}return urls;}
+function urlsToPaths(urls){const marker=`/${EVIDENCE_BUCKET}/`;return (urls||[]).map(u=>{const i=u.indexOf(marker);return i<0?null:decodeURIComponent(u.slice(i+marker.length));}).filter(Boolean);}
+async function purgeEvidence(urls){const paths=urlsToPaths(urls);if(!paths.length)return;const {error}=await sb.storage.from(EVIDENCE_BUCKET).remove(paths);if(error)console.error('purge',error);}
 
 const SHIELD_M=`<svg viewBox="0 0 24 24" fill="none" stroke="#19e3b1" stroke-width="1.7"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>`;
 const SHIELD_A=`<svg viewBox="0 0 24 24" fill="none" stroke="#00b4ff" stroke-width="1.7"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z"/><path d="M12 8v8M8 12h8"/></svg>`;
@@ -287,14 +289,15 @@ function initAdmin(){
   $('#brandName').textContent='مركز القيادة';$('#brandSub').textContent='ADMIN CONTROL';
   $('#topRight').innerHTML=`<div class="badge badge--urgent" id="urgentPing"><span class="pulse"></span> <span id="urgentCount">0</span> مستعجل</div>`;
   setUserChip();
-  $('#sections').innerHTML=`<section class="section active" id="sec-queue"></section><section class="section" id="sec-accounts"></section><section class="section" id="sec-roster"></section>`;
+  $('#sections').innerHTML=`<section class="section active" id="sec-queue"></section><section class="section" id="sec-accounts"></section><section class="section" id="sec-roster"></section><section class="section" id="sec-profile"></section>`;
   buildNav([
     {k:'queue',label:'البلاغات الواردة',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`},
     {k:'accounts',label:'إدارة الأعضاء',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M17 8h5M19.5 5.5v5"/></svg>`},
     {k:'roster',label:'قائمة الرتب',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/></svg>`},
+    {k:'profile',label:'الملف الشخصي',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>`},
   ]);
-  const T={queue:['البلاغات الواردة','راجع البلاغات واتخذ القرار'],accounts:['إدارة الأعضاء','إنشاء الأعضاء وحذف من غادر الفريق'],roster:['قائمة الرتب','ترتيب الأعضاء حسب السمعة']};
-  $$('#nav .nav__item').forEach(it=>it.onclick=()=>{const k=it.dataset.sec;$$('.section').forEach(s=>s.classList.remove('active'));$('#sec-'+k).classList.add('active');navTo(k,T[k],{queue:A_renderQueue,accounts:A_renderAccounts,roster:A_renderRoster}[k]);});
+  const T={queue:['البلاغات الواردة','راجع البلاغات واتخذ القرار'],accounts:['إدارة الأعضاء','إنشاء الأعضاء وحذف من غادر الفريق'],roster:['قائمة الرتب','ترتيب الأعضاء حسب السمعة'],profile:['الملف الشخصي','تغيير كلمة المرور والصورة']};
+  $$('#nav .nav__item').forEach(it=>it.onclick=()=>{const k=it.dataset.sec;$$('.section').forEach(s=>s.classList.remove('active'));$('#sec-'+k).classList.add('active');navTo(k,T[k],{queue:A_renderQueue,accounts:A_renderAccounts,roster:A_renderRoster,profile:()=>renderProfile('#sec-profile',{roleLabel:'قائد أمني'})}[k]);});
   $('#pageTitle').textContent=T.queue[0];$('#pageSub').textContent=T.queue[1];
   A_refresh();setInterval(A_refresh,15000);
 }
@@ -328,16 +331,17 @@ function A_openReview(id){const r=A_reports.find(x=>x.id===id);if(!r)return;cons
   ${links.map(([l,u])=>`<div class="field"><label>${l}</label><a class="ev-link" href="${esc(u)}" target="_blank">${esc(u)}</a></div>`).join('')}
   ${(r.evidence||[]).length?`<div class="field"><label>الأدلة (${r.evidence.length})</label><div class="thumbs">${r.evidence.map(u=>`<a href="${esc(u)}" target="_blank"><img class="thumb" src="${esc(u)}"></a>`).join('')}</div></div>`:''}
   <div class="field"><label>ملاحظة / تعليق للعضو</label><textarea id="adminComment" class="textarea" placeholder="اكتب ملاحظتك حول البلاغ..."></textarea></div>
-  <div class="row" style="gap:10px"><button class="btn btn--ok" style="flex:1" id="approveBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg> قبول (+${r.priority==='urgent'?2:1})</button><button class="btn btn--danger" style="flex:1" id="dismissBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg> رفض</button></div>`;
+  <div class="row" style="gap:10px"><button class="btn btn--ok" style="flex:1" id="approveBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg> قبول (+${r.priority==='urgent'?2:1})</button><button class="btn btn--danger" style="flex:1" id="dismissBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg> رفض (-1)</button></div>`;
   $('#reviewModal').classList.add('open');
   $('#closeReview').onclick=()=>$('#reviewModal').classList.remove('open');
   $('#approveBtn').onclick=()=>A_decide(r,'approved');$('#dismissBtn').onclick=()=>A_decide(r,'dismissed');
 }
 async function A_decide(r,status){const comment=$('#adminComment').value.trim();$('#approveBtn').disabled=$('#dismissBtn').disabled=true;
-  const {error}=await sb.rpc('decide_report',{p_report:r.id,p_status:status,p_comment:comment,p_reviewer:ME.id});
+  const {data,error}=await sb.rpc('decide_report',{p_report:r.id,p_status:status,p_comment:comment,p_reviewer:ME.id});
   if(error){console.error(error);toast('تعذّر حفظ القرار','error');$('#approveBtn').disabled=$('#dismissBtn').disabled=false;return;}
+  if(Array.isArray(data)&&data.length)await purgeEvidence(data); // remove storage files of any trimmed old report
   const gain=status==='approved'?(r.priority==='urgent'?2:1):0;
-  toast(status==='approved'?`تم القبول ✓ (+${gain} سمعة)`:'تم رفض البلاغ','success');
+  toast(status==='approved'?`تم القبول ✓ (+${gain} سمعة)`:'تم الرفض ✓ (-1 سمعة)','success');
   $('#reviewModal').classList.remove('open');A_refresh();
 }
 function A_renderAccounts(){
@@ -378,15 +382,16 @@ function initOwner(){
   $('#brandName').textContent='المُشرف العام';$('#brandSub').textContent='OWNER · OVERSIGHT';
   $('#topRight').innerHTML=`<div class="badge badge--pending"><span class="pulse"></span> وضع المراقبة</div>`;
   setUserChip();
-  $('#sections').innerHTML=`<section class="section active" id="sec-dash"></section><section class="section" id="sec-watch"></section><section class="section" id="sec-admins"></section><section class="section" id="sec-orost"></section>`;
+  $('#sections').innerHTML=`<section class="section active" id="sec-dash"></section><section class="section" id="sec-watch"></section><section class="section" id="sec-admins"></section><section class="section" id="sec-orost"></section><section class="section" id="sec-oprof"></section>`;
   buildNav([
     {k:'dash',label:'نظرة عامة',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>`},
     {k:'watch',label:'مراقبة البلاغات',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`},
     {k:'admins',label:'إدارة القادة',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M17 8h5M19.5 5.5v5"/></svg>`},
     {k:'orost',label:'قائمة الرتب',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/></svg>`},
+    {k:'oprof',label:'الملف الشخصي',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>`},
   ]);
-  const T={dash:['نظرة عامة','إحصاءات المنصّة الكاملة'],watch:['مراقبة البلاغات','عرض جميع البلاغات دون تدخّل'],admins:['إدارة القادة','إنشاء حسابات القادة ومتابعتهم'],orost:['قائمة الرتب','ترتيب الأعضاء حسب السمعة']};
-  const R={dash:O_dash,watch:O_watch,admins:O_admins,orost:O_roster};
+  const T={dash:['نظرة عامة','إحصاءات المنصّة الكاملة'],watch:['مراقبة البلاغات','عرض جميع البلاغات دون تدخّل'],admins:['إدارة القادة','إنشاء حسابات القادة ومتابعتهم'],orost:['قائمة الرتب','ترتيب الأعضاء حسب السمعة'],oprof:['الملف الشخصي','تغيير كلمة المرور والصورة']};
+  const R={dash:O_dash,watch:O_watch,admins:O_admins,orost:O_roster,oprof:()=>renderProfile('#sec-oprof',{roleLabel:'المُشرف العام'})};
   $$('#nav .nav__item').forEach(it=>it.onclick=()=>{const k=it.dataset.sec;$$('.section').forEach(s=>s.classList.remove('active'));$('#sec-'+k).classList.add('active');navTo(k,T[k],R[k]);});
   $('#pageTitle').textContent=T.dash[0];$('#pageSub').textContent=T.dash[1];
   O_refresh().then(O_dash);setInterval(O_refresh,15000);
@@ -565,21 +570,22 @@ function M_archCard(r){const off=r.payload?.offenders||[];
   ${r.admin_comment?`<div style="margin-top:10px;padding:11px 13px;background:var(--bg-1);border:1px solid var(--line);border-radius:10px"><div style="font-size:11px;color:var(--txt-faint);font-family:var(--font-mono);margin-bottom:4px">ملاحظة القائد</div><div style="font-size:13px;color:var(--txt-dim);line-height:1.6">${esc(r.admin_comment)}</div></div>`:''}
   <div style="margin-top:10px;font-size:11px;color:var(--txt-faint);font-family:var(--font-mono)">${new Date(r.created_at).toLocaleString('ar-EG')}</div></div>`;
 }
-function M_profile(){
-  $('#sec-profile').innerHTML=`<div class="grid" style="grid-template-columns:320px 1fr">
-    <div class="panel" style="text-align:center"><img id="pfAvatar" src="${ME.avatar_url||FB(ME.display_name)}" style="width:120px;height:120px;border-radius:24px;object-fit:cover;border:1px solid var(--line-glow);margin:0 auto 14px">
+function renderProfile(hostSel,opts){const showRep=opts&&opts.showRep;const roleLabel=opts&&opts.roleLabel;
+  $(hostSel).innerHTML=`<div class="grid" style="grid-template-columns:320px 1fr">
+    <div class="panel" style="text-align:center"><img id="pfAvatar" src="${ME.avatar_url||FB(ME.display_name,ME.role==='member'?'19e3b1':'00b4ff')}" style="width:120px;height:120px;border-radius:24px;object-fit:cover;border:1px solid var(--line-glow);margin:0 auto 14px">
       <div style="font-family:var(--font-disp);font-weight:900;font-size:20px">${esc(ME.display_name)}</div>
       <div class="mono" style="color:var(--theme);font-size:12px;margin-top:4px">@${esc(ME.username)}</div>
-      <div class="badge badge--ok" style="margin-top:14px">${rankInfo(ME.reputation)} · ${ME.reputation} نقطة</div>
+      <div class="badge ${ME.role==='member'?'badge--ok':'badge--pending'}" style="margin-top:14px">${showRep?`${rankInfo(ME.reputation)} · ${ME.reputation} نقطة`:roleLabel}</div>
       <label class="btn btn--ghost btn--block" style="margin-top:18px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg> تغيير الصورة<input type="file" id="avatarInput" accept="image/*" hidden></label></div>
     <div class="panel"><div class="panel__title"><span class="tick"></span> الحساب</div>
       <div class="field"><label>اسم المستخدم (لا يمكن تغييره)</label><input class="input" value="${esc(ME.display_name)}" disabled style="opacity:.6;cursor:not-allowed"></div>
       <div class="divider"></div>
       <div class="field"><label>كلمة مرور جديدة</label><input id="pfPass" type="password" class="input" placeholder="أدخل كلمة مرور جديدة"></div>
       <button class="btn btn--blue" id="savePass">تحديث كلمة المرور</button></div></div>`;
-  $('#avatarInput').onchange=async e=>{const f=e.target.files[0];if(!f)return;toast('جارٍ رفع الصورة...','info');const [url]=await uploadFiles(ME.id,[f]);if(!url){toast('تعذّر رفع الصورة','error');return;}await sb.rpc('update_avatar',{p_id:ME.id,p_avatar:url});ME.avatar_url=url;$('#pfAvatar').src=url;$('#ucAvatar').src=url;toast('تم تحديث الصورة ✓','success');};
+  $('#avatarInput').onchange=async e=>{const f=e.target.files[0];if(!f)return;toast('جارٍ رفع الصورة...','info');const [url]=await uploadFiles('avatars/'+ME.id,[f]);if(!url){toast('تعذّر رفع الصورة','error');return;}await sb.rpc('update_avatar',{p_id:ME.id,p_avatar:url});ME.avatar_url=url;$('#pfAvatar').src=url;$('#ucAvatar').src=url;toast('تم تحديث الصورة ✓','success');};
   $('#savePass').onclick=async()=>{const v=$('#pfPass').value;if(!v||v.length<4){toast('كلمة المرور قصيرة','warn');return;}const {error}=await sb.rpc('change_password',{p_id:ME.id,p_new_password:v});if(error){toast('تعذّر التحديث','error');return;}$('#pfPass').value='';toast('تم تحديث كلمة المرور ✓','success');};
 }
+function M_profile(){renderProfile('#sec-profile',{showRep:true});}
 function M_empty(msg){return `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/></svg><div>${msg}</div></div>`;}
 
 /* ===================== INIT ===================== */
