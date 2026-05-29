@@ -290,10 +290,10 @@ function initAdmin(){
   $('#sections').innerHTML=`<section class="section active" id="sec-queue"></section><section class="section" id="sec-accounts"></section><section class="section" id="sec-roster"></section>`;
   buildNav([
     {k:'queue',label:'البلاغات الواردة',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`},
-    {k:'accounts',label:'إدارة الحسابات',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M17 8h5M19.5 5.5v5"/></svg>`},
+    {k:'accounts',label:'إدارة الأعضاء',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M17 8h5M19.5 5.5v5"/></svg>`},
     {k:'roster',label:'قائمة الرتب',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/></svg>`},
   ]);
-  const T={queue:['البلاغات الواردة','راجع البلاغات واتخذ القرار'],accounts:['إدارة الحسابات','إنشاء حسابات الأعضاء والقادة'],roster:['قائمة الرتب','ترتيب الأعضاء حسب السمعة']};
+  const T={queue:['البلاغات الواردة','راجع البلاغات واتخذ القرار'],accounts:['إدارة الأعضاء','إنشاء الأعضاء وحذف من غادر الفريق'],roster:['قائمة الرتب','ترتيب الأعضاء حسب السمعة']};
   $$('#nav .nav__item').forEach(it=>it.onclick=()=>{const k=it.dataset.sec;$$('.section').forEach(s=>s.classList.remove('active'));$('#sec-'+k).classList.add('active');navTo(k,T[k],{queue:A_renderQueue,accounts:A_renderAccounts,roster:A_renderRoster}[k]);});
   $('#pageTitle').textContent=T.queue[0];$('#pageSub').textContent=T.queue[1];
   A_refresh();setInterval(A_refresh,15000);
@@ -348,11 +348,18 @@ function A_renderAccounts(){
       <div class="field"><label>كلمة المرور</label><input id="newPass" class="input" placeholder="٤ أحرف على الأقل"></div>
       <button class="btn btn--primary btn--block" id="createBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> إنشاء الحساب</button>
       <div class="hint" style="margin-top:12px">الاسم هو نفسه اسم الدخول ولا يمكن تغييره لاحقًا. نوع الحساب يحدّد ما يراه المستخدم بعد الدخول.</div></div>
-    <div class="panel"><div class="panel__title"><span class="tick"></span> الحسابات الحالية</div><div id="accountsList" class="stagger"></div></div></div>`;
+    <div class="panel"><div class="panel__title"><span class="tick"></span> الأعضاء الحاليون</div><div id="accountsList" class="stagger"></div></div></div>`;
   $('#createBtn').onclick=A_createAccount;A_listAccounts();
 }
-async function A_listAccounts(){const {data:ms=[]}=await sb.from('members').select('*').order('created_at',{ascending:false});
-  $('#accountsList').innerHTML=(ms||[]).map(m=>`<div class="lb-row"><img class="lb-row__avatar" src="${m.avatar_url||FB(m.display_name,m.role==='admin'?'00b4ff':'19e3b1')}"><div style="flex:1"><div class="lb-row__name">${esc(m.display_name)}</div><div class="lb-row__rank">@${esc(m.username)}</div></div><span class="badge ${m.role==='admin'?'badge--pending':'badge--ok'}">${m.role==='admin'?'قائد':'عضو'}</span></div>`).join('')||'<div class="empty">لا حسابات</div>';
+async function A_listAccounts(){const {data:ms=[]}=await sb.from('members').select('*').eq('role','member').order('created_at',{ascending:false});
+  $('#accountsList').innerHTML=(ms||[]).map(m=>`<div class="lb-row"><img class="lb-row__avatar" src="${m.avatar_url||FB(m.display_name)}"><div style="flex:1"><div class="lb-row__name">${esc(m.display_name)}</div><div class="lb-row__rank">@${esc(m.username)} · ${m.reputation} نقطة</div></div><button class="icon-btn del-acc" data-id="${m.id}" data-name="${esc(m.display_name)}" title="حذف الحساب"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>`).join('')||'<div class="empty">لا أعضاء بعد</div>';
+  $$('.del-acc').forEach(b=>b.onclick=()=>A_deleteMember(b.dataset.id,b.dataset.name));
+}
+async function A_deleteMember(id,name){
+  if(!confirm(`حذف حساب "${name}" نهائيًا؟ سيُحذف الحساب وكل بلاغاته. لا يمكن التراجع.`))return;
+  const {error}=await sb.rpc('delete_member',{p_actor_id:ME.id,p_target_id:id});
+  if(error){toast('تعذّر الحذف','error');console.error(error);return;}
+  toast('تم حذف الحساب ✓','success');A_listAccounts();
 }
 async function A_createAccount(){const role=$('#newRole').value,user=$('#newUser').value.trim(),pass=$('#newPass').value;
   if(!user||!pass){toast('أكمل الحقول','warn');return;}if(pass.length<4){toast('كلمة المرور قصيرة','warn');return;}
@@ -437,7 +444,14 @@ function O_admins(){
   $('#oCreate').onclick=O_createAdmin;O_listAdmins();
 }
 async function O_listAdmins(){const {data:ms=[]}=await sb.from('members').select('*').eq('role','admin').order('created_at',{ascending:false});
-  $('#oList').innerHTML=(ms||[]).map(m=>`<div class="lb-row"><img class="lb-row__avatar" src="${m.avatar_url||FB(m.display_name,'00b4ff')}"><div style="flex:1"><div class="lb-row__name">${esc(m.display_name)}</div><div class="lb-row__rank">@${esc(m.username)}</div></div><span class="badge badge--pending">قائد</span></div>`).join('')||'<div class="empty">لا قادة بعد</div>';
+  $('#oList').innerHTML=(ms||[]).map(m=>`<div class="lb-row"><img class="lb-row__avatar" src="${m.avatar_url||FB(m.display_name,'00b4ff')}"><div style="flex:1"><div class="lb-row__name">${esc(m.display_name)}</div><div class="lb-row__rank">@${esc(m.username)}</div></div><span class="badge badge--pending">قائد</span><button class="icon-btn o-del" data-id="${m.id}" data-name="${esc(m.display_name)}" title="حذف القائد"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>`).join('')||'<div class="empty">لا قادة بعد</div>';
+  $$('#oList .o-del').forEach(b=>b.onclick=()=>O_delete(b.dataset.id,b.dataset.name,O_listAdmins));
+}
+async function O_delete(id,name,after){
+  if(!confirm(`حذف حساب "${name}" نهائيًا؟ سيُحذف الحساب وكل بلاغاته المرتبطة. لا يمكن التراجع.`))return;
+  const {error}=await sb.rpc('delete_member',{p_actor_id:ME.id,p_target_id:id});
+  if(error){toast('تعذّر الحذف','error');console.error(error);return;}
+  toast('تم حذف الحساب ✓','success');if(after)after();
 }
 async function O_createAdmin(){const user=$('#oUser').value.trim(),pass=$('#oPass').value;
   if(!user||!pass){toast('أكمل الحقول','warn');return;}if(pass.length<4){toast('كلمة المرور قصيرة','warn');return;}
@@ -448,7 +462,8 @@ async function O_createAdmin(){const user=$('#oUser').value.trim(),pass=$('#oPas
   $('#oUser').value=$('#oPass').value='';toast('تم إنشاء القائد ✓','success');O_listAdmins();
 }
 async function O_roster(){const {data:rows=[]}=await sb.from('members').select('*').eq('role','member').order('reputation',{ascending:false});
-  $('#sec-orost').innerHTML=`<div class="panel"><div class="panel__title"><span class="tick"></span> ترتيب الأعضاء</div><div class="stagger">${(rows||[]).map((p,i)=>`<div class="lb-row"><div class="lb-row__pos">${i+1}</div><img class="lb-row__avatar" src="${p.avatar_url||FB(p.display_name)}"><div style="flex:1"><div class="lb-row__name">${esc(p.display_name)}</div><div class="lb-row__rank">${rankInfo(p.reputation)}</div></div><div class="lb-row__pts">${p.reputation}</div></div>`).join('')||'<div class="empty">لا أعضاء</div>'}</div></div>`;
+  $('#sec-orost').innerHTML=`<div class="panel"><div class="panel__title"><span class="tick"></span> الأعضاء — العرض والحذف</div><div class="stagger">${(rows||[]).map((p,i)=>`<div class="lb-row"><div class="lb-row__pos">${i+1}</div><img class="lb-row__avatar" src="${p.avatar_url||FB(p.display_name)}"><div style="flex:1"><div class="lb-row__name">${esc(p.display_name)}</div><div class="lb-row__rank">@${esc(p.username)} · ${rankInfo(p.reputation)}</div></div><div class="lb-row__pts">${p.reputation}</div><button class="icon-btn o-del" data-id="${p.id}" data-name="${esc(p.display_name)}" title="حذف العضو"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>`).join('')||'<div class="empty">لا أعضاء</div>'}</div></div>`;
+  $$('#sec-orost .o-del').forEach(b=>b.onclick=()=>O_delete(b.dataset.id,b.dataset.name,O_roster));
 }
 
 /* ===================== MEMBER MODULE ===================== */
