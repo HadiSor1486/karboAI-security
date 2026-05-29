@@ -261,18 +261,19 @@ function enterApp(){
   $('#logoutBtn').onclick=logout;
   $('#menuBtn').onclick=()=>{$('#sidebar').classList.add('open');$('#backdrop').classList.add('open');};
   $('#backdrop').onclick=()=>{$('#sidebar').classList.remove('open');$('#backdrop').classList.remove('open');};
-  if(ME.role==='admin'){document.body.classList.add('admin');initAdmin();}
+  if(ME.role==='owner'){document.body.classList.add('admin');initOwner();}
+  else if(ME.role==='admin'){document.body.classList.add('admin');initAdmin();}
   else{document.body.classList.remove('admin');initMember();}
 }
 function buildNav(items){
   $('#nav').innerHTML=items.map((it,i)=>`<div class="nav__item ${i===0?'active':''}" data-sec="${it.k}">${it.svg}${it.label}</div>`).join('');
 }
 function setUserChip(){
-  const col=ME.role==='admin'?'00b4ff':'19e3b1';
+  const col=ME.role==='member'?'19e3b1':'00b4ff';
   $('#ucAvatar').src=ME.avatar_url||FB(ME.display_name,col);
   $('#ucName').textContent=ME.display_name;
-  $('#ucRank').textContent=ME.role==='admin'?'قائد أمني':`${rankInfo(ME.reputation)} · ${ME.reputation} نقطة`;
-  $('#brandCrest').innerHTML=ME.role==='admin'?SHIELD_A:SHIELD_M;
+  $('#ucRank').textContent=ME.role==='owner'?'المُشرف العام':ME.role==='admin'?'قائد أمني':`${rankInfo(ME.reputation)} · ${ME.reputation} نقطة`;
+  $('#brandCrest').innerHTML=ME.role==='member'?SHIELD_M:SHIELD_A;
 }
 function navTo(k,titles,render){
   $$('#nav .nav__item').forEach(x=>x.classList.toggle('active',x.dataset.sec===k));
@@ -342,7 +343,7 @@ async function A_decide(r,status){const comment=$('#adminComment').value.trim();
 function A_renderAccounts(){
   $('#sec-accounts').innerHTML=`<div class="grid" style="grid-template-columns:1fr 1fr">
     <div class="panel panel--accent"><div class="panel__title"><span class="tick"></span> إنشاء حساب جديد</div>
-      <div class="field"><label>نوع الحساب</label><select id="newRole" class="input"><option value="member">عضو أمني (يقدّم البلاغات)</option><option value="admin">قائد أمني (يستقبل البلاغات)</option></select></div>
+      <div class="field"><label>نوع الحساب</label><select id="newRole" class="input"><option value="member">عضو أمني (يقدّم البلاغات)</option></select></div>
       <div class="field"><label>اسم المستخدم (دائم لا يتغيّر)</label><input id="newUser" class="input" placeholder="مثال: khaled"></div>
       <div class="field"><label>كلمة المرور</label><input id="newPass" class="input" placeholder="٤ أحرف على الأقل"></div>
       <button class="btn btn--primary btn--block" id="createBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> إنشاء الحساب</button>
@@ -356,14 +357,100 @@ async function A_listAccounts(){const {data:ms=[]}=await sb.from('members').sele
 async function A_createAccount(){const role=$('#newRole').value,user=$('#newUser').value.trim(),pass=$('#newPass').value;
   if(!user||!pass){toast('أكمل الحقول','warn');return;}if(pass.length<4){toast('كلمة المرور قصيرة','warn');return;}
   const b=$('#createBtn');b.disabled=true;b.textContent='جارٍ الإنشاء...';
-  const {error}=await sb.rpc('create_member',{p_username:user,p_password:pass,p_role:role});
+  const {error}=await sb.rpc('create_member',{p_creator_id:ME.id,p_username:user,p_password:pass,p_role:role});
   b.disabled=false;b.innerHTML='إنشاء الحساب';
-  if(error){toast(String(error.message).includes('USERNAME_TAKEN')?'اسم المستخدم مستخدم مسبقًا':'تعذّر الإنشاء','error');return;}
+  if(error){const m=String(error.message);toast(m.includes('USERNAME_TAKEN')?'اسم المستخدم مستخدم مسبقًا':m.includes('ADMIN_ONLY')||m.includes('NOT_ALLOWED')?'لا تملك صلاحية إنشاء هذا النوع':'تعذّر الإنشاء','error');return;}
   $('#newUser').value=$('#newPass').value='';toast('تم إنشاء الحساب ✓','success');A_listAccounts();
 }
 async function A_renderRoster(){const {data:rows=[]}=await sb.from('members').select('*').eq('role','member').order('reputation',{ascending:false});
   $('#sec-roster').innerHTML=`<div class="panel"><div class="panel__title"><span class="tick"></span> ترتيب الأعضاء</div><div class="stagger">${(rows||[]).map((p,i)=>`<div class="lb-row"><div class="lb-row__pos">${i+1}</div><img class="lb-row__avatar" src="${p.avatar_url||FB(p.display_name)}"><div style="flex:1"><div class="lb-row__name">${esc(p.display_name)}</div><div class="lb-row__rank">${rankInfo(p.reputation)}</div></div><div class="lb-row__pts">${p.reputation}</div></div>`).join('')||'<div class="empty">لا أعضاء</div>'}</div></div>`;
 }
+/* ===================== OWNER MODULE (you — watch-only, hidden) ===================== */
+let O_members={},O_reports=[],O_filter='all';
+function initOwner(){
+  $('#brandName').textContent='المُشرف العام';$('#brandSub').textContent='OWNER · OVERSIGHT';
+  $('#topRight').innerHTML=`<div class="badge badge--pending"><span class="pulse"></span> وضع المراقبة</div>`;
+  setUserChip();
+  $('#sections').innerHTML=`<section class="section active" id="sec-dash"></section><section class="section" id="sec-watch"></section><section class="section" id="sec-admins"></section><section class="section" id="sec-orost"></section>`;
+  buildNav([
+    {k:'dash',label:'نظرة عامة',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>`},
+    {k:'watch',label:'مراقبة البلاغات',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`},
+    {k:'admins',label:'إدارة القادة',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M17 8h5M19.5 5.5v5"/></svg>`},
+    {k:'orost',label:'قائمة الرتب',svg:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/></svg>`},
+  ]);
+  const T={dash:['نظرة عامة','إحصاءات المنصّة الكاملة'],watch:['مراقبة البلاغات','عرض جميع البلاغات دون تدخّل'],admins:['إدارة القادة','إنشاء حسابات القادة ومتابعتهم'],orost:['قائمة الرتب','ترتيب الأعضاء حسب السمعة']};
+  const R={dash:O_dash,watch:O_watch,admins:O_admins,orost:O_roster};
+  $$('#nav .nav__item').forEach(it=>it.onclick=()=>{const k=it.dataset.sec;$$('.section').forEach(s=>s.classList.remove('active'));$('#sec-'+k).classList.add('active');navTo(k,T[k],R[k]);});
+  $('#pageTitle').textContent=T.dash[0];$('#pageSub').textContent=T.dash[1];
+  O_refresh().then(O_dash);setInterval(O_refresh,15000);
+}
+async function O_refresh(){
+  const {data:ms=[]}=await sb.from('members').select('*');O_members=Object.fromEntries((ms||[]).map(m=>[m.id,m]));
+  const {data:rs=[]}=await sb.from('reports').select('*').order('created_at',{ascending:false});O_reports=rs||[];
+  const a=$('#sec-watch');if(a&&a.classList.contains('active'))O_watch();
+  const d=$('#sec-dash');if(d&&d.classList.contains('active'))O_dash();
+}
+function O_dash(){
+  const all=Object.values(O_members);
+  const admins=all.filter(m=>m.role==='admin').length, members=all.filter(m=>m.role==='member').length;
+  const pending=O_reports.filter(r=>r.status==='pending').length;
+  const approved=O_reports.filter(r=>r.status==='approved').length;
+  const dismissed=O_reports.filter(r=>r.status==='dismissed').length;
+  const urgent=O_reports.filter(r=>r.priority==='urgent'&&r.status==='pending').length;
+  $('#sec-dash').innerHTML=`<div class="grid grid--stats stagger" style="margin-bottom:24px">
+    <div class="stat"><div class="stat__label">القادة</div><div class="stat__value accent">${admins}</div></div>
+    <div class="stat"><div class="stat__label">الأعضاء</div><div class="stat__value">${members}</div></div>
+    <div class="stat"><div class="stat__label">بلاغات قيد المراجعة</div><div class="stat__value" style="color:var(--accent-2)">${pending}</div></div>
+    <div class="stat"><div class="stat__label">مستعجلة الآن</div><div class="stat__value" style="color:var(--urgent)">${urgent}</div></div></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="stat"><div class="stat__label">إجمالي مقبولة</div><div class="stat__value" style="color:var(--accent)">${approved}</div></div>
+      <div class="stat"><div class="stat__label">إجمالي مرفوضة</div><div class="stat__value" style="color:var(--txt-dim)">${dismissed}</div></div>
+      <div class="stat"><div class="stat__label">إجمالي البلاغات</div><div class="stat__value">${O_reports.length}</div></div></div>
+    <div class="panel" style="margin-top:18px"><div class="panel__title"><span class="tick"></span> أنت في وضع المراقبة</div>
+      <p style="color:var(--txt-dim);font-size:13.5px;line-height:1.8">تستطيع متابعة كل شيء من بعيد: البلاغات، القرارات، والحسابات. القرارات (قبول/رفض) من اختصاص القادة فقط، ولا يظهر حسابك لأحد.</p></div>`;
+}
+function O_watch(){
+  const f=O_filter;
+  const list=O_reports.filter(r=>f==='all'?true:f==='pending'?r.status==='pending':f==='approved'?r.status==='approved':r.status==='dismissed');
+  $('#sec-watch').innerHTML=`<div class="tabs" style="margin-bottom:22px">
+    ${[['all','الكل'],['pending','قيد المراجعة'],['approved','مقبولة'],['dismissed','مرفوضة']].map(([k,l])=>`<div class="tab ${f===k?'active':''}" data-f="${k}">${l} <span class="cnt">${O_reports.filter(r=>k==='all'||r.status===k).length}</span></div>`).join('')}</div>
+    ${list.length?`<div class="grid grid--cards stagger">${list.map(O_card).join('')}</div>`:`<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><div>لا بلاغات</div></div>`}`;
+  $$('.tab').forEach(t=>t.onclick=()=>{O_filter=t.dataset.f;O_watch();});
+}
+function O_statusBadge(s){if(s==='approved')return'<span class="badge badge--ok">✓ مقبول</span>';if(s==='dismissed')return'<span class="badge badge--mut">✕ مرفوض</span>';return'<span class="badge badge--pending"><span class="pulse"></span> قيد المراجعة</span>';}
+function O_card(r){const a=O_members[r.author_id]||{display_name:'عضو'},rv=r.reviewed_by?O_members[r.reviewed_by]:null,off=r.payload?.offenders||[];
+  return `<div class="report report--${r.priority==='urgent'?'urgent':'warning'}"><div class="report__head"><span class="report__id mono">#${r.id.slice(0,8).toUpperCase()}</span>${O_statusBadge(r.status)}</div>
+  <div class="report__meta"><span class="badge ${r.priority==='urgent'?'badge--urgent':'badge--warn'}">${PRI[r.priority]}</span><span class="badge badge--mut">${CAT[r.category]}</span>${(r.evidence||[]).length?`<span class="badge badge--mut">📎 ${r.evidence.length}</span>`:''}${r.rep_awarded>0?`<span class="badge badge--ok">+${r.rep_awarded}</span>`:''}</div>
+  <div class="report__desc">${esc(r.description||'')}</div>
+  <div class="row" style="gap:7px;margin-bottom:6px">${off.slice(0,2).map(u=>`<a class="ev-link" href="${esc(u)}" target="_blank">👤 ${esc(u.slice(0,24))}…</a>`).join('')}</div>
+  ${r.admin_comment?`<div style="margin-top:8px;padding:10px 12px;background:var(--bg-1);border:1px solid var(--line);border-radius:10px"><div style="font-size:11px;color:var(--txt-faint);font-family:var(--font-mono);margin-bottom:4px">ملاحظة القائد${rv?' · '+esc(rv.display_name):''}</div><div style="font-size:13px;color:var(--txt-dim);line-height:1.6">${esc(r.admin_comment)}</div></div>`:''}
+  <div class="report__author"><img src="${a.avatar_url||FB(a.display_name)}"><div style="flex:1"><div class="nm">${esc(a.display_name)}</div><div class="rp">مُقدّم البلاغ</div></div></div></div>`;
+}
+function O_admins(){
+  $('#sec-admins').innerHTML=`<div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="panel panel--accent"><div class="panel__title"><span class="tick"></span> إنشاء حساب قائد</div>
+      <div class="field"><label>اسم المستخدم (دائم)</label><input id="oUser" class="input" placeholder="مثال: leader1"></div>
+      <div class="field"><label>كلمة المرور</label><input id="oPass" class="input" placeholder="٤ أحرف على الأقل"></div>
+      <button class="btn btn--primary btn--block" id="oCreate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> إنشاء قائد</button>
+      <div class="hint" style="margin-top:12px">أنت تنشئ القادة فقط. القادة بدورهم ينشئون الأعضاء. القادة هم من يقبل/يرفض البلاغات.</div></div>
+    <div class="panel"><div class="panel__title"><span class="tick"></span> القادة الحاليون</div><div id="oList" class="stagger"></div></div></div>`;
+  $('#oCreate').onclick=O_createAdmin;O_listAdmins();
+}
+async function O_listAdmins(){const {data:ms=[]}=await sb.from('members').select('*').eq('role','admin').order('created_at',{ascending:false});
+  $('#oList').innerHTML=(ms||[]).map(m=>`<div class="lb-row"><img class="lb-row__avatar" src="${m.avatar_url||FB(m.display_name,'00b4ff')}"><div style="flex:1"><div class="lb-row__name">${esc(m.display_name)}</div><div class="lb-row__rank">@${esc(m.username)}</div></div><span class="badge badge--pending">قائد</span></div>`).join('')||'<div class="empty">لا قادة بعد</div>';
+}
+async function O_createAdmin(){const user=$('#oUser').value.trim(),pass=$('#oPass').value;
+  if(!user||!pass){toast('أكمل الحقول','warn');return;}if(pass.length<4){toast('كلمة المرور قصيرة','warn');return;}
+  const b=$('#oCreate');b.disabled=true;b.textContent='جارٍ الإنشاء...';
+  const {error}=await sb.rpc('create_member',{p_creator_id:ME.id,p_username:user,p_password:pass,p_role:'admin'});
+  b.disabled=false;b.innerHTML='إنشاء قائد';
+  if(error){const m=String(error.message);toast(m.includes('USERNAME_TAKEN')?'اسم المستخدم مستخدم مسبقًا':'تعذّر الإنشاء','error');return;}
+  $('#oUser').value=$('#oPass').value='';toast('تم إنشاء القائد ✓','success');O_listAdmins();
+}
+async function O_roster(){const {data:rows=[]}=await sb.from('members').select('*').eq('role','member').order('reputation',{ascending:false});
+  $('#sec-orost').innerHTML=`<div class="panel"><div class="panel__title"><span class="tick"></span> ترتيب الأعضاء</div><div class="stagger">${(rows||[]).map((p,i)=>`<div class="lb-row"><div class="lb-row__pos">${i+1}</div><img class="lb-row__avatar" src="${p.avatar_url||FB(p.display_name)}"><div style="flex:1"><div class="lb-row__name">${esc(p.display_name)}</div><div class="lb-row__rank">${rankInfo(p.reputation)}</div></div><div class="lb-row__pts">${p.reputation}</div></div>`).join('')||'<div class="empty">لا أعضاء</div>'}</div></div>`;
+}
+
 /* ===================== MEMBER MODULE ===================== */
 let M_draft={priority:null,category:null,offenders:[''],files:[]};
 function initMember(){
